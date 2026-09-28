@@ -803,6 +803,159 @@ def test_images_generation_without_multistage_chat_handler_preserves_unavailable
     assert exc_info.value.detail == "openai_serving_chat is not initialized for multi-stage image generation."
 
 
+@pytest.mark.asyncio
+async def test_generative_scoring_handler_is_wired_for_generate(monkeypatch) -> None:
+    """Lock that omni wires the ``/generative_scoring`` handler upstream wires.
+
+    Upstream mounts that route for every server (``build_app`` ->
+    ``register_generate_api_routers``), and the handler resolves its serving
+    object with a bare ``request.app.state.serving_generative_scoring`` — no
+    ``getattr(..., None)`` fallback like the Cohere routes have.  Upstream fills
+    the key in ``init_generate_state`` with no ``else None`` branch; omni builds
+    its own generate state, so a miss here is not "capability absent", it is an
+    ``AttributeError`` on request.
+    """
+    constructed: dict[str, Any] = {}
+
+    class _FakeGenerativeScoring:
+        def __init__(self, engine_client, models, *, request_logger=None) -> None:
+            constructed.update(engine_client=engine_client, models=models, request_logger=request_logger)
+
+    monkeypatch.setattr(api_server, "ServingGenerativeScoring", _FakeGenerativeScoring)
+
+    engine = _FakeEngineClient(
+        stage_configs=[object(), object()],
+        vllm_config=SimpleNamespace(
+            lora_config=None,
+            model_config=SimpleNamespace(),
+            parallel_config=SimpleNamespace(_api_process_rank=0),
+        ),
+    )
+
+    class _FakeModels:
+        def __init__(self, *args, **kwargs):
+            self.base_model_paths = kwargs.get("base_model_paths") or []
+
+        async def init_static_loras(self):
+            return None
+
+    class _FakeCtor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def warmup(self):
+            return None
+
+    class _FakeSpeech(_FakeCtor):
+        async def warmup(self):
+            return None
+
+    monkeypatch.setattr(api_server, "load_chat_template", lambda *_a, **_k: None)
+    monkeypatch.setattr(api_server, "process_lora_modules", lambda modules, _defaults: modules or [])
+    monkeypatch.setattr(api_server, "OpenAIServingModels", _FakeModels)
+    monkeypatch.setattr(api_server, "OnlineRenderer", _FakeCtor)
+    monkeypatch.setattr(api_server, "OpenAIServingResponses", _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingChat", _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingChatBatch", _FakeCtor)
+    monkeypatch.setattr(api_server, "OpenAIServingCompletion", _FakeCtor)
+    monkeypatch.setattr(api_server, "ServingPooling", _FakeCtor)
+    monkeypatch.setattr(api_server, "OpenAIServingEmbedding", _FakeCtor)
+    monkeypatch.setattr(api_server, "ServingClassification", _FakeCtor)
+    monkeypatch.setattr(api_server, "ServingScores", _FakeCtor)
+    monkeypatch.setattr(api_server, "ServingTokenization", _FakeCtor)
+    monkeypatch.setattr(api_server, "OpenAIServingTranscription", _FakeCtor)
+    monkeypatch.setattr(api_server, "OpenAIServingTranslation", _FakeCtor)
+    monkeypatch.setattr(api_server, "AnthropicServingMessages", _FakeCtor)
+    monkeypatch.setattr(api_server, "ServingTokens", _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingSpeech", _FakeSpeech)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingAudioGenerate", _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniStreamingSpeechHandler", _FakeCtor)
+    monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
+    monkeypatch.setattr(api_server, "OpenAIServingRealtime", _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingVideo", _FakeCtor)
+
+    state = State()
+    await api_server.omni_init_app_state(engine, state, _minimal_args())
+
+    assert isinstance(state.serving_generative_scoring, _FakeGenerativeScoring)
+    assert constructed["models"] is state.openai_serving_models
+    assert constructed["engine_client"] is engine
+
+
+@pytest.mark.asyncio
+async def test_generative_scoring_route_resolves_a_handler_after_init(monkeypatch) -> None:
+    """Drive the real upstream resolver against omni-initialised state.
+
+    This is the user-visible half of the contract: before the key is wired the
+    resolver raises ``AttributeError`` inside the route (HTTP 500); afterwards it
+    returns the handler, so the route's own ``NotImplementedError`` branch is the
+    only way to answer "unsupported".
+    """
+    from vllm.entrypoints.generate.generative_scoring.api_router import (
+        generative_scoring as resolve_generative_scoring,
+    )
+
+    class _FakeCtor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def warmup(self):
+            return None
+
+    class _FakeSpeech(_FakeCtor):
+        async def warmup(self):
+            return None
+
+    class _FakeModels:
+        def __init__(self, *args, **kwargs):
+            self.base_model_paths = kwargs.get("base_model_paths") or []
+
+        async def init_static_loras(self):
+            return None
+
+    engine = _FakeEngineClient(
+        stage_configs=[object(), object()],
+        vllm_config=SimpleNamespace(
+            lora_config=None,
+            model_config=SimpleNamespace(),
+            parallel_config=SimpleNamespace(_api_process_rank=0),
+        ),
+    )
+
+    monkeypatch.setattr(api_server, "load_chat_template", lambda *_a, **_k: None)
+    monkeypatch.setattr(api_server, "process_lora_modules", lambda modules, _defaults: modules or [])
+    monkeypatch.setattr(api_server, "OpenAIServingModels", _FakeModels)
+    for name in (
+        "OnlineRenderer",
+        "OpenAIServingResponses",
+        "OmniOpenAIServingChat",
+        "OmniOpenAIServingChatBatch",
+        "OpenAIServingCompletion",
+        "ServingPooling",
+        "OpenAIServingEmbedding",
+        "ServingClassification",
+        "ServingScores",
+        "ServingTokenization",
+        "OpenAIServingTranscription",
+        "OpenAIServingTranslation",
+        "AnthropicServingMessages",
+        "ServingTokens",
+        "OmniOpenAIServingAudioGenerate",
+        "OmniStreamingSpeechHandler",
+        "OpenAIServingRealtime",
+        "OmniOpenAIServingVideo",
+    ):
+        monkeypatch.setattr(api_server, name, _FakeCtor)
+    monkeypatch.setattr(api_server, "OmniOpenAIServingSpeech", _FakeSpeech)
+    monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
+
+    state = State()
+    await api_server.omni_init_app_state(engine, state, _minimal_args())
+
+    request = SimpleNamespace(app=SimpleNamespace(state=state))
+    assert resolve_generative_scoring(request) is state.serving_generative_scoring
+
+
 def test_speech_without_handler_preserves_not_found_http_error() -> None:
     """Lock speech HTTP when ``openai_serving_speech`` is unset.
 
