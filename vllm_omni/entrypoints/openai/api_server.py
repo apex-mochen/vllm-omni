@@ -96,7 +96,6 @@ from vllm_omni.config.stage_config import load_deploy_config
 from vllm_omni.engine.stage_init_utils import set_death_signal
 from vllm_omni.engine.stage_runtime import OmniClientConfig
 from vllm_omni.entrypoints.async_omni import ABORT_TIMEOUT_S, AsyncOmni
-from vllm_omni.entrypoints.duplex.openai import dispatch_realtime_websocket
 from vllm_omni.entrypoints.duplex.serving import OmniDuplexSessionHandler
 from vllm_omni.entrypoints.duplex.warmup import (
     DUPLEX_WARMUP_CLIENT_WAIT_S,
@@ -1785,6 +1784,8 @@ async def realtime_websocket(websocket: WebSocket):
         await websocket.send_json({"type": "error", "code": "unsupported", "error": "VAD realtime is not enabled"})
         await websocket.close(code=1008)
         return
+
+    from vllm_omni.entrypoints.duplex.openai import dispatch_realtime_websocket
 
     await dispatch_realtime_websocket(websocket)
 
