@@ -791,6 +791,13 @@ async def omni_init_app_state(
     state.log_stats = not args.disable_log_stats
     state.args = args
     state.sleeping_stages = set()
+    # ``build_app`` mounts /generative_scoring for every server, and the route
+    # resolves it with a bare ``request.app.state.serving_generative_scoring``
+    # (no ``getattr`` fallback). So the key must exist on every init path below,
+    # including the ones that return early; only the generate path overwrites it
+    # with a real handler, and elsewhere the route reaches its own
+    # ``handler is None`` -> ``NotImplementedError`` branch instead of raising.
+    state.serving_generative_scoring = None
 
     # For omni models
     state.stage_configs = engine_client.stage_configs if hasattr(engine_client, "stage_configs") else None

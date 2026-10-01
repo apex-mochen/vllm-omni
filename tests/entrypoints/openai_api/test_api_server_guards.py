@@ -199,6 +199,7 @@ _DIFFUSION_APP_STATE_KEYS = {
     "rl_rollout_serving",
     "enable_server_load_tracking",
     "server_load_metrics",
+    "serving_generative_scoring",
 }
 _DIFFUSION_MUST_BE_NONE = {
     "vllm_config",
@@ -206,6 +207,7 @@ _DIFFUSION_MUST_BE_NONE = {
     "openai_serving_duplex",
     "openai_streaming_speech",
     "openai_streaming_video",
+    "serving_generative_scoring",
 }
 _DIFFUSION_MUST_BE_WIRED = _DIFFUSION_APP_STATE_KEYS - _DIFFUSION_MUST_BE_NONE
 _MULTISTAGE_APP_STATE_KEYS = {
@@ -231,6 +233,7 @@ _MULTISTAGE_APP_STATE_KEYS = {
     "rl_rollout_serving",
     "enable_server_load_tracking",
     "server_load_metrics",
+    "serving_generative_scoring",
 }
 _MULTISTAGE_MUST_BE_NONE = {
     "openai_serving_duplex",
@@ -954,6 +957,97 @@ async def test_generative_scoring_route_resolves_a_handler_after_init(monkeypatc
 
     request = SimpleNamespace(app=SimpleNamespace(state=state))
     assert resolve_generative_scoring(request) is state.serving_generative_scoring
+
+
+@pytest.mark.asyncio
+async def test_generative_scoring_route_resolves_on_a_duplex_server(monkeypatch) -> None:
+    """A duplex server mounts ``/generative_scoring`` too, so that key must exist.
+
+    ``omni_init_app_state`` returns straight after ``_init_duplex_app_state``, so
+    the generate-path wiring is never reached on this route through init, and the
+    duplex null-out list is the only place that can set the key. Upstream's
+    resolver is a bare attribute read with no ``getattr`` fallback, so leaving it
+    unset is an ``AttributeError`` inside the route (HTTP 500); nulling it lets the
+    route reach its own ``handler is None`` -> ``NotImplementedError`` branch.
+    """
+    from vllm.entrypoints.generate.generative_scoring.api_router import (
+        generative_scoring as resolve_generative_scoring,
+    )
+
+    class _FakeModels:
+        def __init__(self, *args, **kwargs):
+            self.base_model_paths = kwargs.get("base_model_paths") or []
+
+        async def init_static_loras(self):
+            return None
+
+    class _FakeSessionHandler:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    engine = _FakeEngineClient(
+        stage_configs=[],
+        vllm_config=SimpleNamespace(
+            lora_config=None,
+            model_config=SimpleNamespace(),
+            parallel_config=SimpleNamespace(_api_process_rank=0),
+        ),
+    )
+    engine.model = "demo-model"
+    engine.duplex_capabilities = SimpleNamespace(supports_chat_completions=False)
+
+    monkeypatch.setattr(api_server, "DuplexOmni", _FakeEngineClient)
+    monkeypatch.setattr(api_server, "OpenAIServingModels", _FakeModels)
+    monkeypatch.setattr(api_server, "OmniDuplexSessionHandler", _FakeSessionHandler)
+
+    state = State()
+    await api_server.omni_init_app_state(engine, state, _minimal_args())
+
+    app = FastAPI()
+    app.state = state
+    request = Request(scope={"type": "http", "app": app, "headers": []})
+    assert resolve_generative_scoring(request) is None
+
+
+@pytest.mark.asyncio
+async def test_generative_scoring_route_resolves_on_a_pure_diffusion_server(monkeypatch) -> None:
+    """Pure-diffusion init returns before the generate wiring too; same contract."""
+    from vllm.entrypoints.generate.generative_scoring.api_router import (
+        generative_scoring as resolve_generative_scoring,
+    )
+
+    stage = SimpleNamespace(stage_type="diffusion", engine_args={})
+    engine = _FakeEngineClient(stage_configs=[stage])
+
+    def _for_diffusion_factory(label: str):
+        def _factory(cls, *args, **kwargs):
+            return _marker(label)
+
+        return classmethod(_factory)
+
+    monkeypatch.setattr(api_server.OmniOpenAIServingChat, "for_diffusion", _for_diffusion_factory("chat"))
+    monkeypatch.setattr(api_server.OmniOpenAIServingChatBatch, "for_diffusion", _for_diffusion_factory("chat_batch"))
+    monkeypatch.setattr(
+        api_server.OmniOpenAIServingAudioGenerate,
+        "for_diffusion",
+        _for_diffusion_factory("audio_generate"),
+    )
+    monkeypatch.setattr(api_server.OmniOpenAIServingVideo, "for_diffusion", _for_diffusion_factory("video"))
+    monkeypatch.setattr(api_server.OmniStreamingVideoOutputHandler, "__init__", lambda self, *a, **k: None)
+    monkeypatch.setattr(api_server.OmniOpenAIServingSpeech, "for_diffusion", _for_diffusion_factory("speech"))
+    monkeypatch.setattr(
+        api_server.ServingRealtimeRobotOpenPI,
+        "create_policy_server",
+        classmethod(lambda cls, *a, **k: _marker("openpi")),
+    )
+
+    state = State()
+    await api_server.omni_init_app_state(engine, state, _minimal_args())
+
+    app = FastAPI()
+    app.state = state
+    request = Request(scope={"type": "http", "app": app, "headers": []})
+    assert resolve_generative_scoring(request) is None
 
 
 def test_speech_without_handler_preserves_not_found_http_error() -> None:
