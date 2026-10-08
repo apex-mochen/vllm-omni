@@ -805,8 +805,6 @@ def test_images_generation_without_multistage_chat_handler_preserves_unavailable
     assert exc_info.value.detail == "openai_serving_chat is not initialized for multi-stage image generation."
 
 
-
-
 @pytest.mark.asyncio
 async def test_generative_scoring_handler_is_wired_for_generate(monkeypatch) -> None:
     """Lock that omni wires the ``/generative_scoring`` handler upstream wires.
