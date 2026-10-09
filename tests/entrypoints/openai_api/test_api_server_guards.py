@@ -59,7 +59,7 @@ from starlette.websockets import WebSocketDisconnect
 from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 
 from vllm_omni.config.endpoint_policy import OmniServingCapability
-from vllm_omni.entrypoints.openai import api_server, realtime_connection
+from vllm_omni.entrypoints.openai import api_server
 from vllm_omni.entrypoints.serve.utils import errors as serve_errors
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
