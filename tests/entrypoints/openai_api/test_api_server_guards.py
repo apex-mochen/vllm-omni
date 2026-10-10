@@ -634,7 +634,6 @@ async def test_parser_metrics_registered_exactly_when_a_tool_parser_is_set(
     monkeypatch.setattr(api_server, "OmniOpenAIServingAudioGenerate", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniStreamingSpeechHandler", _FakeCtor)
     monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
-    monkeypatch.setattr(api_server, "OpenAIServingRealtime", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniOpenAIServingVideo", _FakeCtor)
 
     await api_server.omni_init_app_state(engine, State(), _minimal_args(**overrides))
