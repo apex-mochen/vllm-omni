@@ -1378,7 +1378,12 @@ async def test_multistage_app_state_key_snapshot(monkeypatch, mocker, tmp_path, 
     disabled = (
         set()
         if "generate" in supported_tasks
-        else {"openai_serving_chat", "openai_serving_chat_batch", "openai_streaming_video"}
+        else {
+            "openai_serving_chat",
+            "openai_serving_chat_batch",
+            "openai_streaming_video",
+            "serving_generative_scoring",
+        }
     )
     _assert_app_state_snapshot(
         state,
