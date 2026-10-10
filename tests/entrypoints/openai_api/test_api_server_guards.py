@@ -873,7 +873,6 @@ async def test_generative_scoring_handler_is_wired_for_generate(monkeypatch) -> 
     monkeypatch.setattr(api_server, "OmniOpenAIServingAudioGenerate", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniStreamingSpeechHandler", _FakeCtor)
     monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
-    monkeypatch.setattr(api_server, "OpenAIServingRealtime", _FakeCtor)
     monkeypatch.setattr(api_server, "OmniOpenAIServingVideo", _FakeCtor)
 
     state = State()
@@ -944,7 +943,6 @@ async def test_generative_scoring_route_resolves_a_handler_after_init(monkeypatc
         "ServingTokens",
         "OmniOpenAIServingAudioGenerate",
         "OmniStreamingSpeechHandler",
-        "OpenAIServingRealtime",
         "OmniOpenAIServingVideo",
     ):
         monkeypatch.setattr(api_server, name, _FakeCtor)
