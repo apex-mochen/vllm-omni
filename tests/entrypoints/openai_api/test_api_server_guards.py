@@ -1328,3 +1328,47 @@ def test_video_lifecycle_guard_precedes_processing(monkeypatch, count, status, m
     with TestClient(app) as client:
         response = client.request(method, path)
     assert response.status_code == status
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "value", "expected"),
+    [("custom", "omni-fingerprint", "omni-fingerprint"), ("none", None, None)],
+)
+async def test_cli_fingerprint_reaches_the_non_streaming_chat_response(
+    monkeypatch, fingerprint_state, mode, value, expected
+) -> None:
+    """The configured fingerprint must be on the non-streaming Omni chat response.
+
+    ``OmniOpenAIServingChat.chat_completion_full_generator`` overrides upstream's
+    generator and builds ``OmniChatCompletionResponse`` itself, so setting the mode
+    at init is not enough: the response has to carry ``self.system_fingerprint``.
+    """
+    from vllm_omni.entrypoints.openai.serving_chat import OmniOpenAIServingChat
+
+    fingerprint = fingerprint_state
+    await _init_multistage_state(monkeypatch, _minimal_args(fingerprint_mode=mode, fingerprint_value=value))
+
+    serving = OmniOpenAIServingChat.__new__(OmniOpenAIServingChat)
+    # What ``BaseServing.__init__`` caches from the mode the init path just set.
+    serving.system_fingerprint = fingerprint.get_system_fingerprint(_fingerprint_config())
+    serving.enable_log_outputs = False
+    serving.request_logger = None
+    serving.get_chat_request_role = lambda _request: "assistant"
+
+    async def _no_outputs():
+        return
+        yield
+
+    response = await serving.chat_completion_full_generator(
+        request=SimpleNamespace(modalities=None, return_prompt_text=None),
+        result_generator=_no_outputs(),
+        request_id="chatcmpl-fingerprint",
+        model_name="omni-model",
+        conversation=[],
+        tokenizer=None,
+        request_metadata=None,
+    )
+
+    assert response.system_fingerprint == expected
+    assert response.model_dump()["system_fingerprint"] == expected

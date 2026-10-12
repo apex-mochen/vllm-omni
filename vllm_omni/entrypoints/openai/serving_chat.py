@@ -2538,6 +2538,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
             prompt_text=prompt_text,
             kv_transfer_params=kv_transfer_params,
             metrics=response_metrics,
+            system_fingerprint=self.system_fingerprint,
         )
 
         # Log complete response if output logging is enabled
