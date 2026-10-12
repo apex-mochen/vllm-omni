@@ -1372,3 +1372,66 @@ async def test_cli_fingerprint_reaches_the_non_streaming_chat_response(
 
     assert response.system_fingerprint == expected
     assert response.model_dump()["system_fingerprint"] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("modalities", [["text"], ["text", "audio"]])
+@pytest.mark.parametrize("include_usage", [False, True])
+@pytest.mark.parametrize(
+    ("mode", "value", "expected"),
+    [("custom", "omni-fingerprint", "omni-fingerprint"), ("none", None, None)],
+)
+async def test_cli_fingerprint_reaches_the_streaming_chat_chunks(
+    monkeypatch, fingerprint_state, mode, value, expected, include_usage, modalities
+) -> None:
+    """The configured fingerprint must be on the streamed Omni chat response too.
+
+    As upstream does, only the final message carries it: the chunk with
+    ``finish_reason`` set, or the trailing usage chunk when ``include_usage`` is on.
+    ``["text", "audio"]`` with text-only output ends on the fallback stop chunk.
+    """
+    from unittest.mock import MagicMock
+
+    from tests.helpers.serving_chat import (
+        build_serving_chat,
+        collect_stream,
+        make_request,
+        make_text_omni_output,
+        parse_sse_chunks,
+    )
+
+    fingerprint = fingerprint_state
+    await _init_multistage_state(monkeypatch, _minimal_args(fingerprint_mode=mode, fingerprint_value=value))
+
+    serving = build_serving_chat()
+    # What ``BaseServing.__init__`` caches from the mode the init path just set.
+    serving.system_fingerprint = fingerprint.get_system_fingerprint(_fingerprint_config())
+
+    async def _text_outputs():
+        yield make_text_omni_output(text="hi", token_ids=[10], finish_reason=None)
+        yield make_text_omni_output(text="!", token_ids=[11], finish_reason="stop")
+
+    chunks = parse_sse_chunks(
+        await collect_stream(
+            serving.chat_completion_stream_generator(
+                request=make_request(modalities=modalities, include_usage=include_usage),
+                result_generator=_text_outputs(),
+                request_id="chatcmpl-fingerprint",
+                model_name="omni-model",
+                conversation=[],
+                tokenizer=MagicMock(),
+                request_metadata=MagicMock(),
+            )
+        )
+    )
+
+    carriers = [chunk for chunk in chunks if chunk.get("system_fingerprint") is not None]
+    if expected is None:
+        assert carriers == []
+        return
+    assert len(carriers) == 1
+    assert carriers[0]["system_fingerprint"] == expected
+    if include_usage:
+        assert carriers[0]["choices"] == [] and carriers[0]["usage"] is not None
+    else:
+        assert [choice["finish_reason"] for choice in carriers[0]["choices"]] == ["stop"]

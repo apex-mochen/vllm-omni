@@ -1475,6 +1475,16 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
             lora_request=lora_request,
         )
 
+    def _stamp_terminal_fingerprint(self, chunk: OmniChatCompletionStreamResponse, include_usage: bool) -> None:
+        # Mirror upstream: only terminal chunks (finish_reason set) carry the
+        # fingerprint. With include_usage, the trailing usage chunk carries it.
+        if (
+            not include_usage
+            and self.system_fingerprint is not None
+            and any(choice.finish_reason is not None for choice in chunk.choices)
+        ):
+            chunk.system_fingerprint = self.system_fingerprint
+
     async def chat_completion_stream_generator(
         self,
         request: ChatCompletionRequest,
@@ -2146,6 +2156,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                             modality=final_output_type,
                             metrics=self._filter_stage_metrics_detail(omni_res.metrics, request),
                         )
+                        self._stamp_terminal_fingerprint(chunk, include_usage)
 
                         # handle usage stats if requested & if continuous
                         if include_continuous_usage:
@@ -2238,6 +2249,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                         modality=final_output_type,
                         metrics=self._filter_stage_metrics_detail(omni_res.metrics, request),
                     )
+                    self._stamp_terminal_fingerprint(chunk, include_usage)
                     chunk.usage = UsageInfo(
                         prompt_tokens=num_prompt_tokens,
                         completion_tokens=0,
@@ -2279,6 +2291,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                         modality=final_output_type,
                         metrics=self._filter_stage_metrics_detail(omni_res.metrics, request),
                     )
+                    self._stamp_terminal_fingerprint(chunk, include_usage)
                     # NOTE: Currently usage is only set the text stages to align with the behavior
                     # of the full generator. TODO (Alex): Add support for usage on all stages for
                     # both streaming and non-streaming.
@@ -2306,6 +2319,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                         choices=[stop_choice],
                         model=model_name,
                     )
+                    self._stamp_terminal_fingerprint(stop_chunk, include_usage)
                     data = stop_chunk.model_dump_json(exclude_unset=True)
                     yield f"data: {data}\n\n"
             # Emit audio_underrun_s + audio_continuity_ok_total once per
@@ -2349,6 +2363,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                     choices=[],
                     model=model_name,
                     usage=final_usage,
+                    system_fingerprint=self.system_fingerprint,
                     metrics=self._filter_stage_metrics_detail(last_metrics, request),
                 )
                 final_usage_data = final_usage_chunk.model_dump_json(exclude_unset=True, exclude_none=True)
