@@ -956,6 +956,87 @@ def test_model_declared_restriction_keeps_its_own_reason() -> None:
     assert resp.json() == {"owner": "upstream"}
 
 
+def _app_with_upstream_messages_and_tokenize_routers() -> FastAPI:
+    """Mount upstream's own Messages and tokenize routers, as ``build_app`` does."""
+    from vllm.entrypoints.anthropic import api_router as messages_api
+    from vllm.entrypoints.serve.tokenize import api_router as tokenize_api
+
+    app = FastAPI()
+    app.state.args = SimpleNamespace(enable_tokenizer_info_endpoint=True)
+    messages_api.attach_router(app)
+    # ``attach_router`` adds /tokenizer_info to the module-level router on every
+    # call, so only let it do that once per process.
+    if any(getattr(route, "path", None) == "/tokenizer_info" for route in tokenize_api.router.routes):
+        app.include_router(tokenize_api.router)
+    else:
+        tokenize_api.attach_router(app)
+    return app
+
+
+_UPSTREAM_ROUTER_CASES = [
+    (
+        "POST",
+        "/v1/messages",
+        {"model": "demo-model", "max_tokens": 4, "messages": [{"role": "user", "content": "hi"}]},
+        "the messages api is unavailable",
+    ),
+    (
+        "POST",
+        "/v1/messages/count_tokens",
+        {"model": "demo-model", "messages": [{"role": "user", "content": "hi"}]},
+        "the messages api is unavailable",
+    ),
+    ("POST", "/tokenize", {"model": "demo-model", "prompt": "hi"}, "tokenization is unavailable"),
+    ("POST", "/detokenize", {"model": "demo-model", "tokens": [1, 2]}, "detokenization is unavailable"),
+    ("GET", "/tokenizer_info", None, "tokenizer info is unavailable"),
+]
+
+
+def test_unwired_route_table_matches_upstream_router_paths() -> None:
+    """Every guarded Messages/tokenize route is one upstream actually mounts.
+
+    The table is keyed by path and method, so a route upstream renames or adds
+    would otherwise be silently left unguarded.
+    """
+    app = _app_with_upstream_messages_and_tokenize_routers()
+    for method, path, _, _ in _UPSTREAM_ROUTER_CASES:
+        capability = next(c for c in OmniServingCapability if c.path == path and method in c.methods)
+        assert api_server.route_is_mounted(app, capability.path, capability.methods), path
+
+
+@pytest.mark.parametrize(("method", "path", "body", "expected_detail"), _UPSTREAM_ROUTER_CASES)
+@pytest.mark.parametrize("value", [_UNSET_ATTRIBUTE, None], ids=["absent", "none"])
+def test_upstream_routes_without_handlers_are_rejected(
+    method: str,
+    path: str,
+    body: dict[str, Any] | None,
+    expected_detail: str,
+    value: object,
+) -> None:
+    """Regression: upstream's real Messages and tokenize routes must not answer 500.
+
+    Pure diffusion leaves ``anthropic_serving_messages`` and
+    ``serving_tokenization`` unset and duplex sets them to ``None``. Upstream's
+    count-tokens route then falls back to ``serving_tokenization`` for its error
+    and /tokenizer_info calls it directly, so both crashed before the guard.
+    """
+    app = _app_with_upstream_messages_and_tokenize_routers()
+    if value is not _UNSET_ATTRIBUTE:
+        app.state.anthropic_serving_messages = value
+        app.state.serving_tokenization = value
+
+    # Without the guard, the upstream handler dereferences the missing handler.
+    with pytest.raises(AttributeError):
+        TestClient(app).request(method, path, json=body)
+
+    api_server._shutdown_routes_without_handlers(app)
+
+    resp = TestClient(app).request(method, path, json=body)
+    assert resp.status_code == 400
+    assert resp.json()["error"]["type"] == "BadRequestError"
+    assert resp.json()["error"]["message"].lower().startswith(expected_detail)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "detail"),
     [

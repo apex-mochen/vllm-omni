@@ -33,6 +33,8 @@ class OmniServingCapability(Enum):
     RESPONSES_RETRIEVE = RouteTarget("/v1/responses/{response_id}", frozenset({"GET"}))
     RESPONSES_CANCEL = RouteTarget("/v1/responses/{response_id}/cancel", frozenset({"POST"}))
     MESSAGES = RouteTarget("/v1/messages", frozenset({"POST"}))
+    MESSAGES_COUNT_TOKENS = RouteTarget("/v1/messages/count_tokens", frozenset({"POST"}))
+    TOKENIZER_INFO = RouteTarget("/tokenizer_info", frozenset({"GET"}))
 
     @property
     def path(self) -> str:
@@ -82,6 +84,11 @@ UNWIRED_HANDLER_ROUTES: tuple[tuple[OmniServingCapability, str, str], ...] = (
         "The Messages API is unavailable because this deployment does not initialize a messages handler.",
     ),
     (
+        OmniServingCapability.MESSAGES_COUNT_TOKENS,
+        "anthropic_serving_messages",
+        "The Messages API is unavailable because this deployment does not initialize a messages handler.",
+    ),
+    (
         OmniServingCapability.TOKENIZE,
         "serving_tokenization",
         "Tokenization is unavailable because this deployment does not initialize a tokenization handler.",
@@ -90,6 +97,11 @@ UNWIRED_HANDLER_ROUTES: tuple[tuple[OmniServingCapability, str, str], ...] = (
         OmniServingCapability.DETOKENIZE,
         "serving_tokenization",
         "Detokenization is unavailable because this deployment does not initialize a tokenization handler.",
+    ),
+    (
+        OmniServingCapability.TOKENIZER_INFO,
+        "serving_tokenization",
+        "Tokenizer info is unavailable because this deployment does not initialize a tokenization handler.",
     ),
 )
 
