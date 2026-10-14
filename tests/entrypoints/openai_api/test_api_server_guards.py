@@ -1311,7 +1311,6 @@ async def test_multistage_wiring_forwards_options_upstream_passes(monkeypatch) -
     monkeypatch.setattr(api_server, "OmniOpenAIServingAudioGenerate", _Stub)
     monkeypatch.setattr(api_server, "OmniStreamingSpeechHandler", _Stub)
     monkeypatch.setattr(api_server, "OmniOpenAIServingVideo", _Stub)
-    monkeypatch.setattr(api_server, "OpenAIServingRealtime", _Stub)
     monkeypatch.setattr(api_server, "create_streaming_video_handler", lambda **_k: _marker("streaming_video"))
 
     template_kwargs = {"enable_thinking": False}
@@ -1329,14 +1328,15 @@ async def test_multistage_wiring_forwards_options_upstream_passes(monkeypatch) -
 
     for name in ("renderer", "responses", "chat", "chat_batch", "tokenization", "anthropic"):
         assert captured[name].get("default_chat_template_kwargs") == template_kwargs, name
-    for name in ("chat", "chat_batch", "completion"):
+    # Upstream passes this to chat, completion and responses.
+    for name in ("chat", "chat_batch", "completion", "responses"):
         assert captured[name].get("enable_per_request_metrics") is True, name
     assert captured["scores"].get("enable_flash_late_interaction") is False
 
     # Option off -> the handlers must see the off value, not a hardcoded one.
     captured.clear()
     await api_server.omni_init_app_state(engine, State(), _minimal_args())
-    for name in ("chat", "chat_batch", "completion"):
+    for name in ("chat", "chat_batch", "completion", "responses"):
         assert captured[name].get("enable_per_request_metrics") is False, name
     assert captured["responses"].get("default_chat_template_kwargs") is None
 
@@ -1370,3 +1370,7 @@ async def test_duplex_wiring_forwards_options_upstream_passes(monkeypatch) -> No
 
     assert captured["chat"].get("enable_per_request_metrics") is True
     assert captured["renderer"].get("log_error_stack") is True
+
+    captured.clear()
+    await api_server._init_duplex_chat(engine, state, _minimal_args(), None)
+    assert captured["chat"].get("enable_per_request_metrics") is False
